@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.martin.payment.client.NotificationClient;
+import com.martin.payment.client.OrderClient;
 import com.martin.payment.entity.Payment;
 import com.martin.payment.entity.PaymentStatus;
 import com.martin.payment.repository.PaymentRepository;
@@ -24,9 +26,17 @@ import jakarta.transaction.Transactional;
 public class PaymentController {
 
     private final PaymentRepository repository;
+    private final OrderClient orderClient;
+    private final NotificationClient notificationClient;
 
-    public PaymentController(PaymentRepository repository) {
+    public PaymentController(
+            PaymentRepository repository,
+            OrderClient orderClient,
+            NotificationClient notificationClient
+    ) {
         this.repository = repository;
+        this.orderClient = orderClient;
+        this.notificationClient = notificationClient;
     }
 
     @PostMapping
@@ -47,7 +57,8 @@ public class PaymentController {
     @Transactional
     public ResponseEntity<String> paymentCallback(
             @RequestParam String paymentRef,
-            @RequestParam String status
+            @RequestParam String status,
+            @RequestParam(required = false) String gatewayTransactionId
     ) {
         Payment payment = repository.findByPaymentRef(paymentRef)
                 .orElseThrow(() -> new RuntimeException("Payment not found"));
@@ -58,8 +69,16 @@ public class PaymentController {
 
         if ("SUCCESS".equalsIgnoreCase(status)) {
             payment.setStatus(PaymentStatus.SUCCESS);
+            payment.setGatewayTransactionId(gatewayTransactionId);
+
+            orderClient.markPaid(payment.getOrderId());
+
+            notificationClient.notifySuccess(payment.getOrderId());
+
         } else {
             payment.setStatus(PaymentStatus.FAILED);
+
+            orderClient.markFailed(payment.getOrderId());
         }
 
         payment.setUpdatedAt(LocalDateTime.now());
